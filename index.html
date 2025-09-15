@@ -91,6 +91,60 @@
             </div>
           </div>
         </div>
+
+        <!-- Minimap Panel (bottom-left) -->
+        <div
+          id="minimapPanel"
+          class="ui-panel adaptive-panel"
+          data-position="bottom-left"
+        >
+          <div class="panel-title">World Map</div>
+          <div class="minimap-container">
+            <canvas
+              id="minimapCanvas"
+              width="150"
+              height="150"
+            ></canvas>
+            <div class="minimap-info">
+              <div class="minimap-legend">
+                <span class="legend-item"
+                  ><span class="legend-dot you"></span>You</span
+                >
+                <span class="legend-item"
+                  ><span class="legend-dot others"></span>Others</span
+                >
+                <span class="legend-item"
+                  ><span class="legend-rect"></span>View</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Performance Panel (bottom-right) -->
+        <div
+          id="perfPanel"
+          class="ui-panel adaptive-panel"
+          data-position="bottom-right"
+        >
+          <div class="panel-title">Performance</div>
+          <div class="status-item">
+            <span class="status-label">FPS:</span>
+            <span
+              id="fpsCounter"
+              class="status-value"
+              >-</span
+            >
+          </div>
+          <div class="status-item">
+            <span class="status-label">Direction:</span>
+            <span
+              id="movementDirection"
+              class="status-value movement-indicator"
+              >-</span
+            >
+          </div>
+        </div>
       </div>
     </div>
 
@@ -142,6 +196,11 @@
         statusPanel: document.getElementById("statusPanel"),
         playerListPanel: document.getElementById("playerListPanel"),
         playerList: document.getElementById("playerList"),
+        minimapPanel: document.getElementById("minimapPanel"),
+        minimapCanvas: document.getElementById("minimapCanvas"),
+        perfPanel: document.getElementById("perfPanel"),
+        fpsCounter: document.getElementById("fpsCounter"),
+        movementDirection: document.getElementById("movementDirection"),
       };
 
       // UI State
@@ -160,7 +219,28 @@
             defaultPosition: "top-right",
             alternatePosition: "bottom-right",
           },
+          minimapPanel: {
+            element: null,
+            currentPosition: "bottom-left",
+            defaultPosition: "bottom-left",
+            alternatePosition: "top-left",
+          },
+          perfPanel: {
+            element: null,
+            currentPosition: "bottom-right",
+            defaultPosition: "bottom-right",
+            alternatePosition: "top-right",
+          },
         },
+      };
+
+      // Performance tracking
+      let perfState = {
+        frameCount: 0,
+        lastTime: performance.now(),
+        fps: 0,
+        lastMovementDirection: null,
+        minimapCtx: null,
       };
 
       // Set canvas size to fill the window
@@ -168,7 +248,6 @@
         canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
         updateViewport();
-        draw();
       }
 
       // Connect to game server
@@ -236,7 +315,6 @@
               updatePlayerPosition(); // Update position in UI
             }
             updatePlayerCount(); // Update player count in case someone left
-            draw();
             break;
           case "player_joined":
             gameState.players[message.player.id] = message.player;
@@ -245,12 +323,10 @@
               loadAvatarImages();
             }
             updatePlayerCount();
-            draw();
             break;
           case "player_left":
             delete gameState.players[message.playerId];
             updatePlayerCount();
-            draw();
             break;
           default:
             console.log("Unknown message:", message);
@@ -359,6 +435,141 @@
         updatePlayerPosition(); // This now calls updateAdaptivePanels()
         updatePlayerCount();
         updatePlayerList();
+        updateMinimap();
+        updatePerformanceDisplay();
+      }
+
+      // Initialize minimap
+      function initMinimap() {
+        perfState.minimapCtx = uiElements.minimapCanvas.getContext("2d");
+        updateMinimap();
+      }
+
+      // Update minimap display
+      function updateMinimap() {
+        const ctx = perfState.minimapCtx;
+        if (
+          !ctx ||
+          !gameState.players ||
+          Object.keys(gameState.players).length === 0
+        ) {
+          return;
+        }
+
+        const canvas = uiElements.minimapCanvas;
+        const scale = canvas.width / WORLD_SIZE; // Scale factor to fit world in minimap
+
+        // Clear minimap
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Draw world background
+        ctx.fillStyle = "rgba(50, 50, 50, 0.8)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Draw grid
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+        ctx.lineWidth = 0.5;
+        const gridSize = canvas.width / 8;
+        for (let i = 0; i <= 8; i++) {
+          const pos = i * gridSize;
+          ctx.beginPath();
+          ctx.moveTo(pos, 0);
+          ctx.lineTo(pos, canvas.height);
+          ctx.moveTo(0, pos);
+          ctx.lineTo(canvas.width, pos);
+          ctx.stroke();
+        }
+
+        // Draw viewport rectangle if we have our player
+        if (gameState.playerId && gameState.players[gameState.playerId]) {
+          const viewportX = gameState.viewport.x * scale;
+          const viewportY = gameState.viewport.y * scale;
+          const viewportWidth = Math.min(
+            canvas.width,
+            window.innerWidth * scale
+          );
+          const viewportHeight = Math.min(
+            canvas.height,
+            window.innerHeight * scale
+          );
+
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(viewportX, viewportY, viewportWidth, viewportHeight);
+        }
+
+        // Draw all players
+        Object.values(gameState.players).forEach((player) => {
+          const x = player.x * scale;
+          const y = player.y * scale;
+
+          ctx.fillStyle =
+            player.id === gameState.playerId ? "#00ff00" : "#00aaff";
+          ctx.beginPath();
+          ctx.arc(
+            x,
+            y,
+            player.id === gameState.playerId ? 3 : 2,
+            0,
+            Math.PI * 2
+          );
+          ctx.fill();
+
+          // Add glow effect
+          ctx.shadowColor =
+            player.id === gameState.playerId ? "#00ff00" : "#00aaff";
+          ctx.shadowBlur = 4;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        });
+      }
+
+      // Update FPS counter and performance display
+      function updatePerformanceDisplay() {
+        const currentTime = performance.now();
+        perfState.frameCount++;
+
+        // Update FPS every second
+        if (currentTime - perfState.lastTime >= 1000) {
+          perfState.fps = Math.round(
+            (perfState.frameCount * 1000) / (currentTime - perfState.lastTime)
+          );
+          uiElements.fpsCounter.textContent = perfState.fps.toString();
+
+          // Color code FPS
+          if (perfState.fps >= 50) {
+            uiElements.fpsCounter.style.color = "#00ff00";
+          } else if (perfState.fps >= 30) {
+            uiElements.fpsCounter.style.color = "#ffaa00";
+          } else {
+            uiElements.fpsCounter.style.color = "#ff0000";
+          }
+
+          perfState.frameCount = 0;
+          perfState.lastTime = currentTime;
+        }
+      }
+
+      // Update movement direction display
+      function updateMovementDirection(direction) {
+        const directionSymbols = {
+          up: "↑",
+          down: "↓",
+          left: "←",
+          right: "→",
+        };
+
+        if (direction) {
+          perfState.lastMovementDirection = direction;
+          uiElements.movementDirection.textContent =
+            directionSymbols[direction] || direction;
+          uiElements.movementDirection.className =
+            "status-value movement-indicator moving";
+        } else {
+          uiElements.movementDirection.textContent = "•";
+          uiElements.movementDirection.className =
+            "status-value movement-indicator stopped";
+        }
       }
 
       // Calculate distance between two points
@@ -521,6 +732,37 @@
             playerListPanel.style.pointerEvents = "auto";
           }
         }
+
+        // Handle minimap panel (bottom-left)
+        const minimapPanel = uiElements.minimapPanel;
+        if (minimapPanel) {
+          const isNearMinimap =
+            screenPos.x < 200 && screenPos.y > canvas.height - 220;
+
+          if (isNearMinimap) {
+            minimapPanel.style.opacity = "0";
+            minimapPanel.style.pointerEvents = "none";
+          } else {
+            minimapPanel.style.opacity = "1";
+            minimapPanel.style.pointerEvents = "auto";
+          }
+        }
+
+        // Handle performance panel (bottom-right)
+        const perfPanel = uiElements.perfPanel;
+        if (perfPanel) {
+          const isNearPerf =
+            screenPos.x > canvas.width - 160 &&
+            screenPos.y > canvas.height - 120;
+
+          if (isNearPerf) {
+            perfPanel.style.opacity = "0";
+            perfPanel.style.pointerEvents = "none";
+          } else {
+            perfPanel.style.opacity = "1";
+            perfPanel.style.pointerEvents = "auto";
+          }
+        }
       }
 
       // Check if avatar position conflicts with a panel position
@@ -562,7 +804,6 @@
               const img = new Image();
               img.onload = function () {
                 avatar.loadedImages[direction][index] = img;
-                draw(); // Redraw when image loads
               };
               img.src = base64Data;
             });
@@ -677,13 +918,15 @@
         const worldImage = new Image();
         worldImage.onload = function () {
           gameState.worldImage = worldImage;
-          draw();
         };
         worldImage.src = "world.jpg";
       }
 
       // Main drawing function
       function draw() {
+        // Update performance tracking
+        updatePerformanceDisplay();
+
         // Clear the canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -707,6 +950,9 @@
 
         // Draw players
         drawPlayers();
+
+        // Request next frame for smooth animation
+        requestAnimationFrame(draw);
       }
 
       // Draw danger zone overlay
@@ -852,15 +1098,19 @@
           switch (event.code) {
             case "ArrowUp":
               sendMoveCommand("up");
+              updateMovementDirection("up");
               break;
             case "ArrowDown":
               sendMoveCommand("down");
+              updateMovementDirection("down");
               break;
             case "ArrowLeft":
               sendMoveCommand("left");
+              updateMovementDirection("left");
               break;
             case "ArrowRight":
               sendMoveCommand("right");
+              updateMovementDirection("right");
               break;
           }
         }
@@ -878,6 +1128,7 @@
             )
           ) {
             sendStopCommand();
+            updateMovementDirection(null); // Clear movement direction
           }
         }
       }
@@ -910,9 +1161,17 @@
         // Initialize UI state
         uiState.panels.statusPanel.element = uiElements.statusPanel;
         uiState.panels.playerListPanel.element = uiElements.playerListPanel;
+        uiState.panels.minimapPanel.element = uiElements.minimapPanel;
+        uiState.panels.perfPanel.element = uiElements.perfPanel;
+
+        // Initialize minimap
+        initMinimap();
 
         loadWorldImage();
         connectToServer();
+
+        // Start the main drawing loop
+        draw();
       }
 
       // Start the game when the page loads
