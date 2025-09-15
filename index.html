@@ -32,6 +32,14 @@
       const WORLD_SIZE = 2048;
       const USERNAME = "Deep";
 
+      // Avatar bounding box - standardized size for all avatars
+      const AVATAR_BBOX = {
+        width: 64, // Fixed width for collision/boundary detection
+        height: 64, // Fixed height for collision/boundary detection
+        offsetX: 32, // Half width - centers the bbox on player position
+        offsetY: 32, // Half height - centers the bbox on player position
+      };
+
       // Keyboard state for movement
       let pressedKeys = {
         ArrowUp: false,
@@ -104,6 +112,10 @@
           case "players_moved":
             // Update player positions
             Object.assign(gameState.players, message.players);
+            // Update viewport if our player moved
+            if (message.players[gameState.playerId]) {
+              updateViewport();
+            }
             draw();
             break;
           case "player_joined":
@@ -146,6 +158,37 @@
         }
       }
 
+      // Check if avatar is in danger zone (near world boundaries)
+      function isInDangerZone(player) {
+        const dangerMargin = 100; // Distance from edge to start showing danger
+
+        // Calculate avatar bounds
+        const avatarLeft = player.x - AVATAR_BBOX.offsetX;
+        const avatarRight = player.x + AVATAR_BBOX.offsetX;
+        const avatarTop = player.y - AVATAR_BBOX.offsetY;
+        const avatarBottom = player.y + AVATAR_BBOX.offsetY;
+
+        // Check if avatar is near any world boundary
+        return (
+          avatarLeft <= dangerMargin || // Near left edge
+          avatarRight >= WORLD_SIZE - dangerMargin || // Near right edge
+          avatarTop <= dangerMargin || // Near top edge
+          avatarBottom >= WORLD_SIZE - dangerMargin // Near bottom edge
+        );
+      }
+
+      // Get avatar bounding box in world coordinates
+      function getAvatarBounds(player) {
+        return {
+          left: player.x - AVATAR_BBOX.offsetX,
+          right: player.x + AVATAR_BBOX.offsetX,
+          top: player.y - AVATAR_BBOX.offsetY,
+          bottom: player.y + AVATAR_BBOX.offsetY,
+          centerX: player.x,
+          centerY: player.y,
+        };
+      }
+
       // Load avatar images from base64 data
       function loadAvatarImages() {
         for (const avatarName in gameState.avatars) {
@@ -166,33 +209,98 @@
         }
       }
 
-      // Update viewport to center player
+      // Update viewport to keep player visible with dead zone
       function updateViewport() {
         if (!gameState.playerId || !gameState.players[gameState.playerId]) {
           return;
         }
 
         const player = gameState.players[gameState.playerId];
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
 
-        // Calculate desired viewport position to center player
-        let viewportX = player.x - centerX;
-        let viewportY = player.y - centerY;
+        // Dead zone - area where player can move without camera following
+        const deadZoneWidth = Math.min(100, canvasWidth * 0.1); // 10% of screen or 100px max
+        const deadZoneHeight = Math.min(100, canvasHeight * 0.1);
+
+        // Current player position on screen
+        const screenX = player.x - gameState.viewport.x;
+        const screenY = player.y - gameState.viewport.y;
+
+        // Target viewport position (start with current)
+        let newViewportX = gameState.viewport.x;
+        let newViewportY = gameState.viewport.y;
+
+        // Check if player is outside the dead zone and adjust camera
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
+
+        // Horizontal dead zone check
+        if (screenX < centerX - deadZoneWidth) {
+          // Player too far left, move camera left
+          newViewportX = player.x - (centerX - deadZoneWidth);
+        } else if (screenX > centerX + deadZoneWidth) {
+          // Player too far right, move camera right
+          newViewportX = player.x - (centerX + deadZoneWidth);
+        }
+
+        // Vertical dead zone check
+        if (screenY < centerY - deadZoneHeight) {
+          // Player too far up, move camera up
+          newViewportY = player.y - (centerY - deadZoneHeight);
+        } else if (screenY > centerY + deadZoneHeight) {
+          // Player too far down, move camera down
+          newViewportY = player.y - (centerY + deadZoneHeight);
+        }
 
         // Clamp viewport to world boundaries
-        viewportX = Math.max(0, Math.min(WORLD_SIZE - canvas.width, viewportX));
-        viewportY = Math.max(
+        newViewportX = Math.max(
           0,
-          Math.min(WORLD_SIZE - canvas.height, viewportY)
+          Math.min(WORLD_SIZE - canvasWidth, newViewportX)
         );
+        newViewportY = Math.max(
+          0,
+          Math.min(WORLD_SIZE - canvasHeight, newViewportY)
+        );
+
+        // Ensure avatar bounding box is always visible (priority over centering)
+        const avatarBounds = getAvatarBounds(player);
+        const margin = 20; // Minimum margin from screen edge
+
+        const minViewportX = avatarBounds.right - canvasWidth + margin; // Keep avatar right edge visible
+        const maxViewportX = avatarBounds.left - margin; // Keep avatar left edge visible
+        const minViewportY = avatarBounds.bottom - canvasHeight + margin; // Keep avatar bottom edge visible
+        const maxViewportY = avatarBounds.top - margin; // Keep avatar top edge visible
+
+        newViewportX = Math.max(
+          minViewportX,
+          Math.min(maxViewportX, newViewportX)
+        );
+        newViewportY = Math.max(
+          minViewportY,
+          Math.min(maxViewportY, newViewportY)
+        );
+
+        // Final clamp to world boundaries
+        newViewportX = Math.max(
+          0,
+          Math.min(WORLD_SIZE - canvasWidth, newViewportX)
+        );
+        newViewportY = Math.max(
+          0,
+          Math.min(WORLD_SIZE - canvasHeight, newViewportY)
+        );
+
+        // Calculate final player screen position for debugging
+        const finalScreenX = player.x - newViewportX;
+        const finalScreenY = player.y - newViewportY;
 
         console.log(
-          `Updating viewport: player at (${player.x}, ${player.y}), canvas (${canvas.width}x${canvas.height}), viewport (${viewportX}, ${viewportY})`
+          `Camera: player world(${player.x}, ${player.y}) screen(${finalScreenX}, ${finalScreenY}) viewport(${newViewportX}, ${newViewportY}) canvas(${canvasWidth}x${canvasHeight})`
         );
 
-        gameState.viewport.x = viewportX;
-        gameState.viewport.y = viewportY;
+        gameState.viewport.x = newViewportX;
+        gameState.viewport.y = newViewportY;
       }
 
       // Convert world coordinates to screen coordinates
@@ -233,8 +341,37 @@
           );
         }
 
+        // Draw danger zone overlay if player is near boundaries
+        drawDangerZone();
+
         // Draw players
         drawPlayers();
+      }
+
+      // Draw danger zone overlay
+      function drawDangerZone() {
+        if (!gameState.playerId || !gameState.players[gameState.playerId]) {
+          return;
+        }
+
+        const player = gameState.players[gameState.playerId];
+
+        if (isInDangerZone(player)) {
+          // Create pulsing red overlay effect
+          const time = Date.now() / 300; // Speed of pulsing
+          const alpha = 0.1 + 0.05 * Math.sin(time); // Pulse between 0.1 and 0.15
+
+          ctx.save();
+          ctx.fillStyle = `rgba(255, 0, 0, ${alpha})`;
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+          // Add border warning
+          ctx.strokeStyle = `rgba(255, 0, 0, ${alpha * 2})`;
+          ctx.lineWidth = 10;
+          ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
+
+          ctx.restore();
+        }
       }
 
       // Draw all players and their avatars
@@ -284,6 +421,11 @@
 
         // Draw username label
         drawUsernameLabel(player, screenPos);
+
+        // Draw bounding box for our own player only when in danger zone
+        if (player.id === gameState.playerId && isInDangerZone(player)) {
+          drawAvatarBoundingBox(player, screenPos);
+        }
       }
 
       // Draw username label above avatar
@@ -300,6 +442,25 @@
         // Draw text with outline
         ctx.strokeText(player.username, screenPos.x, labelY);
         ctx.fillText(player.username, screenPos.x, labelY);
+
+        ctx.restore();
+      }
+
+      // Draw avatar bounding box (debug visualization)
+      function drawAvatarBoundingBox(player, screenPos) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(0, 255, 0, 0.7)"; // Semi-transparent green
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]); // Dashed line
+
+        const bboxX = screenPos.x - AVATAR_BBOX.offsetX;
+        const bboxY = screenPos.y - AVATAR_BBOX.offsetY;
+
+        ctx.strokeRect(bboxX, bboxY, AVATAR_BBOX.width, AVATAR_BBOX.height);
+
+        // Draw center point
+        ctx.fillStyle = "rgba(0, 255, 0, 0.8)";
+        ctx.fillRect(screenPos.x - 2, screenPos.y - 2, 4, 4);
 
         ctx.restore();
       }
