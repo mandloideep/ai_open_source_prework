@@ -435,8 +435,8 @@
         updatePlayerPosition(); // This now calls updateAdaptivePanels()
         updatePlayerCount();
         updatePlayerList();
-        updateMinimap();
-        updatePerformanceDisplay();
+        // updateMinimap() - now called every frame in draw()
+        // updatePerformanceDisplay() - now called every frame in draw()
       }
 
       // Initialize minimap
@@ -484,18 +484,27 @@
         if (gameState.playerId && gameState.players[gameState.playerId]) {
           const viewportX = gameState.viewport.x * scale;
           const viewportY = gameState.viewport.y * scale;
-          const viewportWidth = Math.min(
-            canvas.width,
-            window.innerWidth * scale
+          // Use actual screen dimensions scaled to minimap
+          const viewportWidth = window.innerWidth * scale;
+          const viewportHeight = window.innerHeight * scale;
+
+          // Clamp the rectangle to stay within minimap bounds
+          const clampedWidth = Math.min(
+            viewportWidth,
+            canvas.width - viewportX
           );
-          const viewportHeight = Math.min(
-            canvas.height,
-            window.innerHeight * scale
+          const clampedHeight = Math.min(
+            viewportHeight,
+            canvas.height - viewportY
           );
 
           ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
           ctx.lineWidth = 1;
-          ctx.strokeRect(viewportX, viewportY, viewportWidth, viewportHeight);
+          ctx.strokeRect(viewportX, viewportY, clampedWidth, clampedHeight);
+
+          // Add a semi-transparent fill to make viewport more visible
+          ctx.fillStyle = "rgba(255, 255, 255, 0.1)";
+          ctx.fillRect(viewportX, viewportY, clampedWidth, clampedHeight);
         }
 
         // Draw all players
@@ -503,24 +512,33 @@
           const x = player.x * scale;
           const y = player.y * scale;
 
-          ctx.fillStyle =
-            player.id === gameState.playerId ? "#00ff00" : "#00aaff";
-          ctx.beginPath();
-          ctx.arc(
-            x,
-            y,
-            player.id === gameState.playerId ? 3 : 2,
-            0,
-            Math.PI * 2
-          );
-          ctx.fill();
+          // Only draw if player is within minimap bounds
+          if (x >= 0 && x <= canvas.width && y >= 0 && y <= canvas.height) {
+            const isMe = player.id === gameState.playerId;
+            const radius = isMe ? 4 : 3; // Make dots slightly larger
 
-          // Add glow effect
-          ctx.shadowColor =
-            player.id === gameState.playerId ? "#00ff00" : "#00aaff";
-          ctx.shadowBlur = 4;
-          ctx.fill();
-          ctx.shadowBlur = 0;
+            ctx.fillStyle = isMe ? "#00ff00" : "#00aaff";
+
+            // Draw main dot
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Add glow effect
+            ctx.shadowColor = isMe ? "#00ff00" : "#00aaff";
+            ctx.shadowBlur = 6;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            // Add a white border for better visibility
+            ctx.strokeStyle = "rgba(255, 255, 255, 0.8)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(x, y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         });
       }
 
@@ -897,9 +915,16 @@
         const finalScreenX = player.x - newViewportX;
         const finalScreenY = player.y - newViewportY;
 
-        console.log(
-          `Camera: player world(${player.x}, ${player.y}) screen(${finalScreenX}, ${finalScreenY}) viewport(${newViewportX}, ${newViewportY}) canvas(${canvasWidth}x${canvasHeight})`
-        );
+        // Only log viewport changes when they actually change significantly
+        const viewportChanged =
+          Math.abs(gameState.viewport.x - newViewportX) > 1 ||
+          Math.abs(gameState.viewport.y - newViewportY) > 1;
+
+        if (viewportChanged) {
+          console.log(
+            `Camera: player world(${player.x}, ${player.y}) screen(${finalScreenX}, ${finalScreenY}) viewport(${newViewportX}, ${newViewportY}) canvas(${canvasWidth}x${canvasHeight})`
+          );
+        }
 
         gameState.viewport.x = newViewportX;
         gameState.viewport.y = newViewportY;
@@ -950,6 +975,9 @@
 
         // Draw players
         drawPlayers();
+
+        // Update minimap to keep it synchronized
+        updateMinimap();
 
         // Request next frame for smooth animation
         requestAnimationFrame(draw);
