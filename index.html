@@ -15,6 +15,85 @@
   <body>
     <canvas id="gameCanvas"></canvas>
 
+    <!-- Game UI Overlay -->
+    <div id="gameUI">
+      <!-- UI Toggle Button -->
+      <button
+        id="uiToggleBtn"
+        class="ui-toggle-button"
+        title="Toggle UI (H key)"
+      >
+        <span class="toggle-icon">👁️</span>
+      </button>
+
+      <!-- UI Container for all panels -->
+      <div
+        id="uiContainer"
+        class="ui-container"
+      >
+        <div
+          id="statusPanel"
+          class="ui-panel adaptive-panel"
+          data-position="top-left"
+        >
+          <div class="panel-title">Game Status</div>
+          <div class="status-item">
+            <span class="status-label">Connection:</span>
+            <span
+              id="connectionStatus"
+              class="status-value"
+              >Connecting...</span
+            >
+            <span
+              id="connectionDot"
+              class="connection-dot connecting"
+            ></span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Player:</span>
+            <span
+              id="playerInfo"
+              class="status-value"
+              >-</span
+            >
+          </div>
+          <div class="status-item">
+            <span class="status-label">Position:</span>
+            <span
+              id="playerPosition"
+              class="status-value"
+              >-</span
+            >
+          </div>
+          <div class="status-item">
+            <span class="status-label">Players Online:</span>
+            <span
+              id="playerCount"
+              class="status-value"
+              >-</span
+            >
+          </div>
+        </div>
+
+        <!-- Player List Panel (top-right) -->
+        <div
+          id="playerListPanel"
+          class="ui-panel adaptive-panel"
+          data-position="top-right"
+        >
+          <div class="panel-title">Players Online</div>
+          <div
+            id="playerList"
+            class="player-list"
+          >
+            <div class="player-list-item loading">
+              <span>Loading players...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <script>
       const canvas = document.getElementById("gameCanvas");
       const ctx = canvas.getContext("2d");
@@ -51,6 +130,39 @@
       // WebSocket connection
       let ws = null;
 
+      // UI Elements
+      const uiElements = {
+        connectionStatus: document.getElementById("connectionStatus"),
+        connectionDot: document.getElementById("connectionDot"),
+        playerInfo: document.getElementById("playerInfo"),
+        playerPosition: document.getElementById("playerPosition"),
+        playerCount: document.getElementById("playerCount"),
+        toggleButton: document.getElementById("uiToggleBtn"),
+        uiContainer: document.getElementById("uiContainer"),
+        statusPanel: document.getElementById("statusPanel"),
+        playerListPanel: document.getElementById("playerListPanel"),
+        playerList: document.getElementById("playerList"),
+      };
+
+      // UI State
+      let uiState = {
+        isVisible: true,
+        panels: {
+          statusPanel: {
+            element: null,
+            currentPosition: "top-left",
+            defaultPosition: "top-left",
+            alternatePosition: "top-right",
+          },
+          playerListPanel: {
+            element: null,
+            currentPosition: "top-right",
+            defaultPosition: "top-right",
+            alternatePosition: "bottom-right",
+          },
+        },
+      };
+
       // Set canvas size to fill the window
       function resizeCanvas() {
         canvas.width = window.innerWidth;
@@ -61,10 +173,13 @@
 
       // Connect to game server
       function connectToServer() {
+        updateConnectionStatus("connecting");
+
         ws = new WebSocket("wss://codepath-mmorg.onrender.com");
 
         ws.onopen = function () {
           console.log("Connected to game server");
+          updateConnectionStatus("connected");
           // Send join game message
           const joinMessage = {
             action: "join_game",
@@ -81,10 +196,12 @@
         ws.onclose = function () {
           console.log("Disconnected from game server");
           gameState.isConnected = false;
+          updateConnectionStatus("disconnected");
         };
 
         ws.onerror = function (error) {
           console.error("WebSocket error:", error);
+          updateConnectionStatus("disconnected");
         };
       }
 
@@ -103,6 +220,7 @@
                 gameState.players[gameState.playerId]
               );
               loadAvatarImages();
+              updateAllUI();
               // Ensure canvas is properly sized before updating viewport
               resizeCanvas();
             } else {
@@ -115,7 +233,9 @@
             // Update viewport if our player moved
             if (message.players[gameState.playerId]) {
               updateViewport();
+              updatePlayerPosition(); // Update position in UI
             }
+            updatePlayerCount(); // Update player count in case someone left
             draw();
             break;
           case "player_joined":
@@ -124,10 +244,12 @@
               gameState.avatars[message.avatar.name] = message.avatar;
               loadAvatarImages();
             }
+            updatePlayerCount();
             draw();
             break;
           case "player_left":
             delete gameState.players[message.playerId];
+            updatePlayerCount();
             draw();
             break;
           default:
@@ -187,6 +309,245 @@
           centerX: player.x,
           centerY: player.y,
         };
+      }
+
+      // Update UI elements
+      function updateConnectionStatus(status) {
+        const statusText = {
+          connecting: "Connecting...",
+          connected: "Connected",
+          disconnected: "Disconnected",
+        };
+
+        uiElements.connectionStatus.textContent =
+          statusText[status] || "Unknown";
+        uiElements.connectionDot.className = `connection-dot ${status}`;
+      }
+
+      function updatePlayerInfo() {
+        if (gameState.playerId && gameState.players[gameState.playerId]) {
+          const player = gameState.players[gameState.playerId];
+          uiElements.playerInfo.textContent = `${
+            player.username
+          } (${gameState.playerId.substring(0, 8)})`;
+        } else {
+          uiElements.playerInfo.textContent = "-";
+        }
+      }
+
+      function updatePlayerPosition() {
+        if (gameState.playerId && gameState.players[gameState.playerId]) {
+          const player = gameState.players[gameState.playerId];
+          uiElements.playerPosition.textContent = `(${Math.round(
+            player.x
+          )}, ${Math.round(player.y)})`;
+
+          // Check if we need to hide/show panels when position updates
+          updateAdaptivePanels();
+        } else {
+          uiElements.playerPosition.textContent = "-";
+        }
+      }
+
+      function updatePlayerCount() {
+        const count = Object.keys(gameState.players).length;
+        uiElements.playerCount.textContent = count > 0 ? count.toString() : "-";
+      }
+
+      function updateAllUI() {
+        updatePlayerInfo();
+        updatePlayerPosition(); // This now calls updateAdaptivePanels()
+        updatePlayerCount();
+        updatePlayerList();
+      }
+
+      // Calculate distance between two points
+      function calculateDistance(x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      // Check if a player is visible on screen
+      function isPlayerVisible(player) {
+        const screenPos = worldToScreen(player.x, player.y);
+        return (
+          screenPos.x >= -50 &&
+          screenPos.x <= canvas.width + 50 &&
+          screenPos.y >= -50 &&
+          screenPos.y <= canvas.height + 50
+        );
+      }
+
+      // Format distance for display
+      function formatDistance(distance) {
+        if (distance < 1000) {
+          return Math.round(distance) + "px";
+        } else {
+          return (distance / 1000).toFixed(1) + "k";
+        }
+      }
+
+      // Update the player list
+      function updatePlayerList() {
+        if (!gameState.playerId || !gameState.players[gameState.playerId]) {
+          return;
+        }
+
+        const myPlayer = gameState.players[gameState.playerId];
+        const playerList = uiElements.playerList;
+
+        // Clear current list
+        playerList.innerHTML = "";
+
+        // Create array of all players with distance info
+        const playersWithDistance = Object.values(gameState.players).map(
+          (player) => {
+            const distance =
+              player.id === gameState.playerId
+                ? 0
+                : calculateDistance(myPlayer.x, myPlayer.y, player.x, player.y);
+
+            return {
+              ...player,
+              distance: distance,
+              isVisible: isPlayerVisible(player),
+            };
+          }
+        );
+
+        // Sort by distance (you first, then by distance)
+        playersWithDistance.sort((a, b) => {
+          if (a.id === gameState.playerId) return -1;
+          if (b.id === gameState.playerId) return 1;
+          return a.distance - b.distance;
+        });
+
+        // Create list items
+        playersWithDistance.forEach((player) => {
+          const listItem = document.createElement("div");
+          listItem.className = `player-list-item ${
+            player.id === gameState.playerId ? "you" : ""
+          }`;
+
+          const playerName = document.createElement("span");
+          playerName.className = "player-name";
+          playerName.textContent =
+            player.username +
+            (player.id === gameState.playerId ? " (you)" : "");
+
+          const playerDistance = document.createElement("span");
+          playerDistance.className = "player-distance";
+          playerDistance.textContent =
+            player.id === gameState.playerId
+              ? "-"
+              : formatDistance(player.distance);
+
+          const playerStatus = document.createElement("div");
+          playerStatus.className = `player-status ${
+            player.isVisible ? "visible" : "hidden"
+          }`;
+          playerStatus.title = player.isVisible
+            ? "Visible on screen"
+            : "Off screen";
+
+          listItem.appendChild(playerName);
+          listItem.appendChild(playerDistance);
+          listItem.appendChild(playerStatus);
+
+          playerList.appendChild(listItem);
+        });
+      }
+
+      // UI Toggle functionality
+      function toggleUI() {
+        uiState.isVisible = !uiState.isVisible;
+
+        if (uiState.isVisible) {
+          uiElements.uiContainer.classList.remove("hidden");
+          document.getElementById("gameUI").classList.remove("ui-hidden");
+        } else {
+          uiElements.uiContainer.classList.add("hidden");
+          document.getElementById("gameUI").classList.add("ui-hidden");
+        }
+
+        console.log("UI toggled:", uiState.isVisible ? "visible" : "hidden");
+      }
+
+      // Hide UI panels when "Deep" avatar gets too close
+      function updateAdaptivePanels() {
+        if (
+          !gameState.playerId ||
+          !gameState.players[gameState.playerId] ||
+          !uiState.isVisible
+        ) {
+          return;
+        }
+
+        const player = gameState.players[gameState.playerId];
+
+        // Only check for "Deep" player (that's you!)
+        if (player.username !== "Deep") {
+          return;
+        }
+
+        const screenPos = worldToScreen(player.x, player.y);
+
+        // Handle status panel (top-left)
+        const statusPanel = uiElements.statusPanel;
+        if (statusPanel) {
+          const isNearStatusPanel = screenPos.x < 240 && screenPos.y < 180;
+
+          if (isNearStatusPanel) {
+            statusPanel.style.opacity = "0";
+            statusPanel.style.pointerEvents = "none";
+          } else {
+            statusPanel.style.opacity = "1";
+            statusPanel.style.pointerEvents = "auto";
+          }
+        }
+
+        // Handle player list panel (top-right)
+        const playerListPanel = uiElements.playerListPanel;
+        if (playerListPanel) {
+          const isNearPlayerList =
+            screenPos.x > canvas.width - 280 && screenPos.y < 220;
+
+          if (isNearPlayerList) {
+            playerListPanel.style.opacity = "0";
+            playerListPanel.style.pointerEvents = "none";
+          } else {
+            playerListPanel.style.opacity = "1";
+            playerListPanel.style.pointerEvents = "auto";
+          }
+        }
+      }
+
+      // Check if avatar position conflicts with a panel position
+      function checkPanelCollision(screenPos, panelPosition) {
+        const avatarBuffer = 120; // Distance threshold to trigger panel movement
+
+        switch (panelPosition) {
+          case "top-left":
+            return screenPos.x < avatarBuffer && screenPos.y < avatarBuffer;
+          case "top-right":
+            return (
+              screenPos.x > canvas.width - avatarBuffer &&
+              screenPos.y < avatarBuffer
+            );
+          case "bottom-left":
+            return (
+              screenPos.x < avatarBuffer &&
+              screenPos.y > canvas.height - avatarBuffer
+            );
+          case "bottom-right":
+            return (
+              screenPos.x > canvas.width - avatarBuffer &&
+              screenPos.y > canvas.height - avatarBuffer
+            );
+          default:
+            return false;
+        }
       }
 
       // Load avatar images from base64 data
@@ -465,8 +826,15 @@
         ctx.restore();
       }
 
-      // Handle keyboard input for movement
+      // Handle keyboard input for movement and UI
       function handleKeyDown(event) {
+        // Handle UI toggle with H key
+        if (event.code === "KeyH") {
+          event.preventDefault();
+          toggleUI();
+          return;
+        }
+
         // Prevent arrow keys from scrolling the page
         if (
           ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
@@ -535,6 +903,13 @@
         document.addEventListener("keydown", handleKeyDown);
         document.addEventListener("keyup", handleKeyUp);
         window.addEventListener("blur", handleWindowBlur);
+
+        // Set up UI toggle button
+        uiElements.toggleButton.addEventListener("click", toggleUI);
+
+        // Initialize UI state
+        uiState.panels.statusPanel.element = uiElements.statusPanel;
+        uiState.panels.playerListPanel.element = uiElements.playerListPanel;
 
         loadWorldImage();
         connectToServer();
